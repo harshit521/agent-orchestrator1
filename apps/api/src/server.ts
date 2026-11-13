@@ -1,82 +1,20 @@
+import { buildApp } from "./app.js";
 
-import Fastify from "fastify";
-import { randomUUID } from "node:crypto";
-import { ResearchAgent } from "./agents/research/research.agent.js";
-import type { AgentContext } from "./agents/base/agent-context.js";
+const DEFAULT_PORT = 3000;
 
-const app = Fastify({
-  logger: true,
-});
+function resolvePort(value: string | undefined): number {
+  const port = Number.parseInt(value ?? "", 10);
 
-const researchAgent = new ResearchAgent();
+  return Number.isInteger(port) && port >= 0 ? port : DEFAULT_PORT;
+}
 
-app.post<{
-  Body: {
-    input: string;
-  };
-}>("/research", async (request, reply) => {
-  try {
-    const { input } = request.body ?? {};
-
-    if (typeof input !== "string" || !input.trim()) {
-      return reply.status(400).send({
-        success: false,
-        error: "A valid input string is required.",
-      });
-    }
-
-    const taskId = randomUUID();
-    const runId = randomUUID();
-
-    const context: AgentContext = {
-      taskId,
-      runId,
-      originalPrompt: input,
-      previousResults: {},
-    };
-
-    const result = await researchAgent.run(
-      { prompt: input },
-      context
-    );
-
-    if (result.status === "failed") {
-      request.log.error(
-        { error: result.error },
-        "Research agent execution failed"
-      );
-
-      return reply.status(500).send({
-        success: false,
-        error: result.error?.message ?? "Research agent execution failed.",
-        result,
-      });
-    }
-
-    return reply.send({
-      success: true,
-      taskId,
-      runId,
-      result,
-    });
-  } catch (error: unknown) {
-    request.log.error({ err: error }, "Unexpected research API error");
-
-    return reply.status(500).send({
-      success: false,
-      error:
-        error instanceof Error
-          ? error.message
-          : "An unexpected error occurred.",
-    });
-  }
-});
+const app = buildApp();
 
 const start = async () => {
   try {
     await app.listen({
-      port: Number(process.env.PORT) || 3000,
-      host: "127.0.0.1",
+      port: resolvePort(process.env.PORT),
+      host: process.env.HOST ?? "127.0.0.1",
     });
   } catch (error) {
     app.log.error(error);
@@ -84,4 +22,19 @@ const start = async () => {
   }
 };
 
-start();
+const shutdown = async (signal: string) => {
+  app.log.info({ signal }, "Shutting down");
+
+  try {
+    await app.close();
+    process.exit(0);
+  } catch (error) {
+    app.log.error({ err: error }, "Failed to shut down cleanly");
+    process.exit(1);
+  }
+};
+
+process.once("SIGINT", () => void shutdown("SIGINT"));
+process.once("SIGTERM", () => void shutdown("SIGTERM"));
+
+void start();

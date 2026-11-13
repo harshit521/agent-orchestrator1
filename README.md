@@ -121,7 +121,7 @@ TaskFleet follows a three-layer architecture.
                        │
 ┌──────────────────────▼──────────────────────┐
 │             Orchestration Layer             │
-│         Node.js + Express + TypeScript      │
+│         Node.js + Fastify + TypeScript      │
 │                                             │
 │ Task Lifecycle │ Sessions │ Orchestrator    │
 │ WebSocket Server │ GitHub Integration       │
@@ -217,7 +217,7 @@ Live status and log updates
 
 Backend
 
-Node.js + Express + TypeScript
+Node.js + Fastify + TypeScript
 
 REST API and orchestration
 
@@ -232,6 +232,12 @@ ORM
 Prisma
 
 Database access and schema management
+
+Validation
+
+Zod
+
+HTTP request and agent payload validation
 
 Worker Isolation
 
@@ -301,9 +307,9 @@ Development and demo deployment
 
 Testing
 
-Vitest/Jest + Supertest
+Vitest + Fastify `.inject()`
 
-Unit and integration testing
+Unit and HTTP integration testing
 
 📁 Suggested Project Structure
 
@@ -414,6 +420,60 @@ Allow students or new developers to observe how an AI agent approaches a task th
 Security-Conscious Teams
 
 Apply secret scanning, dependency scanning, and SAST checks to AI-generated code before merging.
+
+🛠️ Getting Started
+
+Requirements: Node.js 20+ and npm 10+.
+
+```bash
+npm install
+npm run dev        # API with hot reload on http://127.0.0.1:3000
+npm run typecheck  # strict TypeScript check (src + tests)
+npm test           # Vitest unit + HTTP integration tests
+npm run build      # compile the API to apps/api/dist
+npm start          # run the compiled build
+```
+
+Environment variables:
+
+- `PORT` — HTTP port (default `3000`)
+- `HOST` — bind address (default `127.0.0.1`; set `0.0.0.0` inside Docker)
+
+Example request:
+
+```bash
+curl -X POST http://127.0.0.1:3000/research \
+  -H 'content-type: application/json' \
+  -d '{"input":"Explain git worktrees","agentId":"research-agent"}'
+```
+
+`agentId` is optional and defaults to `research-agent`. Responses:
+
+- `200` — `{ success: true, taskId, runId, agentId, result }`
+- `400` — invalid or missing `input`
+- `404` — unknown `agentId`
+- `500` — the agent reported a failure, or an unexpected error occurred
+
+✅ Current Implementation Status
+
+The repository currently contains the **backend foundation only**. Everything else in this README describes the target design.
+
+Implemented:
+
+- npm workspaces monorepo (`apps/api`)
+- Fastify 5 HTTP server in strict TypeScript (native ESM)
+- `POST /research` endpoint with Zod-validated input
+- `GET /health` health check
+- Vendor-neutral `Agent` plugin contract (`AgentInput`, `AgentContext`, `AgentResult`)
+- `AgentRegistry` so agents can be added without touching the HTTP layer
+- `ResearchAgent` reference implementation (stub output — no LLM call yet)
+- Structured Pino logging and graceful `SIGINT`/`SIGTERM` shutdown
+- Vitest suite covering the agent contract, the registry, and the HTTP routes
+- Root `build`, `typecheck`, `test` scripts and a GitHub Actions CI workflow
+
+Not implemented yet: React frontend, Kanban board, WebSockets, PostgreSQL/Prisma persistence, Docker worker isolation, Git worktrees, LLM-backed agents, GitHub OAuth/PR/CI integration, SecOps scanning.
+
+> The stack table above lists the **target** stack. Prisma, Docker, GitHub, Socket.IO, OAuth, and the security scanners are planned, not present yet.
 
 🗺️ Development Roadmap
 
@@ -583,10 +643,13 @@ These are potential extensions rather than features confirmed as part of the cur
 
 📌 Project Status
 
-Status: In Development
+Status: In Development — backend foundation
 Project Type: Semester Group Project
 Duration: 16 weeks
 Focus: Multi-Agent AI + DevOps + GitHub Automation + Security
+
+Implemented today: monorepo, Fastify API, typed agent plugin contract + registry, Zod validation, tests, CI.
+Remaining: everything from the Kanban UI and persistence through Docker isolation, LLM-backed agents, GitHub integration, and SecOps scanning.
 
 📄 Project Reference
 
