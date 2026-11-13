@@ -1,10 +1,20 @@
-import type { AgentContext } from "./agent-context";
-import type { AgentResult } from "./agent-result";
+
+import type { AgentContext } from "./agent-context.js";
+import type { AgentResult } from "./agent-result.js";
+
+export interface AgentInput {
+  prompt: string;
+  data?: unknown;
+}
 
 export interface Agent {
   id: string;
   name: string;
-  description?: string;
+  description: string;
+  capabilities: string[];
 
-  execute(context: AgentContext): Promise<AgentResult>;
+  run(
+    input: AgentInput,
+    context: AgentContext
+  ): Promise<AgentResult>;
 }
