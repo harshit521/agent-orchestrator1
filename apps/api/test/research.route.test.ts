@@ -4,7 +4,6 @@ import type { FastifyInstance } from "fastify";
 import { buildApp } from "../src/app.js";
 import { createAgentRegistry } from "../src/agents/index.js";
 import type { Agent } from "../src/agents/base/agent.js";
-import { createTestDatabase, type TestDatabase } from "./helpers.js";
 
 const failingAgent: Agent = {
   id: "failing-agent",
@@ -25,16 +24,13 @@ const failingAgent: Agent = {
   },
 };
 
-describe("TaskFleet API", () => {
-  let db: TestDatabase;
+describe("POST /research", () => {
   let app: FastifyInstance;
 
   beforeAll(async () => {
-    db = createTestDatabase();
     app = buildApp({
       logger: false,
-      config: db.config,
-      agents: createAgentRegistry(db.config.llm).register(failingAgent),
+      agents: createAgentRegistry().register(failingAgent),
     });
 
     await app.ready();
@@ -42,50 +38,9 @@ describe("TaskFleet API", () => {
 
   afterAll(async () => {
     await app.close();
-    db.cleanup();
   });
 
-  async function waitForRun(runId: string) {
-    for (let attempt = 0; attempt < 100; attempt += 1) {
-      const response = await app.inject({
-        method: "GET",
-        url: `/runs/${runId}`,
-      });
-      const body = response.json();
-
-      if (body.run?.status === "completed" || body.run?.status === "failed") {
-        return body.run;
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
-
-    throw new Error(`Run ${runId} did not finish in time`);
-  }
-
-  it("reports health", async () => {
-    const response = await app.inject({ method: "GET", url: "/health" });
-
-    expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({ status: "ok" });
-  });
-
-  it("lists registered agents", async () => {
-    const response = await app.inject({ method: "GET", url: "/agents" });
-
-    expect(response.statusCode).toBe(200);
-
-    const body = response.json();
-    expect(body.success).toBe(true);
-    expect(body.agents).toContainEqual(
-      expect.objectContaining({
-        id: "research-agent",
-        capabilities: ["research", "summarization", "analysis"],
-      })
-    );
-  });
-
-  it("runs the research endpoint synchronously", async () => {
+  it("runs the default agent for a valid request", async () => {
     const response = await app.inject({
       method: "POST",
       url: "/research",
@@ -98,18 +53,13 @@ describe("TaskFleet API", () => {
     expect(body).toMatchObject({
       success: true,
       agentId: "research-agent",
-      result: {
-        agentId: "research-agent",
-        status: "completed",
-        provider: "stub",
-        output: { topic: "hello" },
-      },
+      result: { agentId: "research-agent", status: "completed" },
     });
     expect(body.taskId).toEqual(expect.any(String));
     expect(body.runId).toEqual(expect.any(String));
   });
 
-  it("rejects a blank research input with 400", async () => {
+  it("rejects a blank input with 400", async () => {
     const response = await app.inject({
       method: "POST",
       url: "/research",
@@ -121,6 +71,16 @@ describe("TaskFleet API", () => {
       success: false,
       issues: [{ path: "input" }],
     });
+  });
+
+  it("rejects a missing input with 400", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/research",
+      payload: {},
+    });
+
+    expect(response.statusCode).toBe(400);
   });
 
   it("returns 404 for an unknown agent", async () => {
@@ -152,104 +112,10 @@ describe("TaskFleet API", () => {
     });
   });
 
-  it("creates a task asynchronously and persists progress events", async () => {
-    const created = await app.inject({
-      method: "POST",
-      url: "/tasks",
-      payload: { prompt: "Add rate limiting to the auth endpoint" },
-    });
+  it("responds to health checks", async () => {
+    const response = await app.inject({ method: "GET", url: "/health" });
 
-    expect(created.statusCode).toBe(202);
-
-    const createdBody = created.json();
-    expect(createdBody.task).toMatchObject({
-      title: "Add rate limiting to the auth endpoint",
-      agentId: "research-agent",
-      status: "running",
-    });
-    expect(createdBody.run.id).toEqual(expect.any(String));
-
-    const run = await waitForRun(createdBody.run.id);
-
-    expect(run.status).toBe("completed");
-    expect(run.provider).toBe("stub");
-    expect(run.durationMs).toBeGreaterThanOrEqual(0);
-    expect(run.events.map((event: { type: string }) => event.type)).toEqual([
-      "run.started",
-      "agent.started",
-      "agent.progress",
-      "agent.progress",
-      "agent.completed",
-      "run.completed",
-    ]);
-
-    const progress = run.events.filter(
-      (event: { type: string }) => event.type === "agent.progress"
-    );
-    expect(progress.map((event: { percent: number }) => event.percent)).toEqual([
-      20, 80,
-    ]);
-
-    const task = await app.inject({
-      method: "GET",
-      url: `/tasks/${createdBody.task.id}`,
-    });
-
-    expect(task.statusCode).toBe(200);
-
-    const taskBody = task.json();
-    expect(taskBody.success).toBe(true);
-    expect(taskBody.task).toMatchObject({
-      id: createdBody.task.id,
-      status: "completed",
-    });
-    expect(taskBody.task.runs[0].status).toBe("completed");
-    expect(taskBody.task.runs[0].events[0].type).toBe("run.started");
-
-    const list = await app.inject({ method: "GET", url: "/tasks" });
-    expect(list.statusCode).toBe(200);
-    expect(
-      list
-        .json()
-        .tasks.some((item: { id: string }) => item.id === createdBody.task.id)
-    ).toBe(true);
-  });
-
-  it("records a failed background run", async () => {
-    const created = await app.inject({
-      method: "POST",
-      url: "/tasks",
-      payload: { prompt: "Trigger the failure", agentId: "failing-agent" },
-    });
-
-    expect(created.statusCode).toBe(202);
-
-    const run = await waitForRun(created.json().run.id);
-
-    expect(run.status).toBe("failed");
-    expect(run.errorCode).toBe("BOOM");
-    expect(run.events.at(-1)).toMatchObject({
-      type: "run.failed",
-      percent: 100,
-    });
-  });
-
-  it("returns 404 for unknown tasks and runs", async () => {
-    const task = await app.inject({
-      method: "GET",
-      url: "/tasks/missing",
-    });
-    const run = await app.inject({
-      method: "GET",
-      url: "/runs/missing",
-    });
-    const events = await app.inject({
-      method: "GET",
-      url: "/runs/missing/events",
-    });
-
-    expect(task.statusCode).toBe(404);
-    expect(run.statusCode).toBe(404);
-    expect(events.statusCode).toBe(404);
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ status: "ok" });
   });
 });

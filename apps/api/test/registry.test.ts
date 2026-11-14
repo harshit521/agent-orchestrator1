@@ -2,13 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import { AgentRegistry } from "../src/agents/registry.js";
 import { ResearchAgent } from "../src/agents/research/research.agent.js";
-import { StubProvider } from "../src/llm/stub.provider.js";
 
 describe("AgentRegistry", () => {
-  const createAgent = () => new ResearchAgent(new StubProvider());
-
   it("registers and retrieves an agent by id", () => {
-    const agent = createAgent();
+    const agent = new ResearchAgent();
     const registry = new AgentRegistry().register(agent);
 
     expect(registry.get(agent.id)).toBe(agent);
@@ -16,9 +13,9 @@ describe("AgentRegistry", () => {
   });
 
   it("rejects duplicate ids", () => {
-    const registry = new AgentRegistry().register(createAgent());
+    const registry = new AgentRegistry().register(new ResearchAgent());
 
-    expect(() => registry.register(createAgent())).toThrow(
+    expect(() => registry.register(new ResearchAgent())).toThrow(
       'Agent "research-agent" is already registered.'
     );
   });
