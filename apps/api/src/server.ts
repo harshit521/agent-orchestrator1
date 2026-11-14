@@ -1,29 +1,21 @@
 import { buildApp } from "./app.js";
-import { ConfigError, loadConfig, type AppConfig } from "./config.js";
-import { loadEnvFile } from "./env.js";
 
-function readConfig(): AppConfig {
-  try {
-    return loadConfig();
-  } catch (error: unknown) {
-    const message =
-      error instanceof Error ? error.message : "Invalid configuration.";
+const DEFAULT_PORT = 3000;
 
-    console.error(
-      error instanceof ConfigError ? message : `Configuration error: ${message}`
-    );
-    process.exit(1);
-  }
+function resolvePort(value: string | undefined): number {
+  const port = Number.parseInt(value ?? "", 10);
+
+  return Number.isInteger(port) && port >= 0 ? port : DEFAULT_PORT;
 }
 
-loadEnvFile();
-
-const config = readConfig();
-const app = buildApp({ config });
+const app = buildApp();
 
 const start = async () => {
   try {
-    await app.listen({ port: config.port, host: config.host });
+    await app.listen({
+      port: resolvePort(process.env.PORT),
+      host: process.env.HOST ?? "127.0.0.1",
+    });
   } catch (error) {
     app.log.error(error);
     process.exit(1);
