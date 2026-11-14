@@ -1,0 +1,111 @@
+// TaskFleet persistence model.
+// SQLite is used for local development and demos; the schema maps to
+// PostgreSQL without changes beyond the datasource provider.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Task {
+  id        String   @id @default(cuid())
+  title     String
+  prompt    String
+  agentId   String
+  status    String
+  priority  String   @default("medium")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  runs Run[]
+
+  @@index([status])
+  @@index([priority])
+  @@index([createdAt])
+}
+
+model Run {
+  id              String    @id @default(cuid())
+  taskId          String
+  agentId         String
+  status          RunStatus
+  provider        String?
+  model           String?
+  output          String?
+  errorCode       String?
+  errorMessage    String?
+  inputTokens     Int?
+  outputTokens    Int?
+  branch          String?
+  worktreePath    String?
+  commitSha       String?
+  pullRequestUrl  String?
+  baseBranch      String?
+  startedAt       DateTime  @default(now())
+  completedAt     DateTime?
+  durationMs      Int?
+
+  task      Task          @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  events    RunEvent[]
+  artifacts RunArtifact[]
+  runSecurity RunSecurity[]
+
+  @@index([taskId])
+  @@index([status])
+  @@index([branch])
+}
+
+enum RunStatus {
+  queued
+  running
+  completed
+  failed
+  cancelled
+}
+
+model RunArtifact {
+  id        String   @id @default(cuid())
+  runId     String
+  kind      String
+  title     String?
+  content   String?
+  data      String?
+  createdAt DateTime @default(now())
+
+  run Run @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId, kind])
+}
+
+model RunSecurity {
+  id          String   @id @default(cuid())
+  runId       String   @unique
+  scannerId   String
+  status      String   // passed/failed/unavailable/error
+  severity    String   // high/critical/medium/low
+  description String
+  affectedFile String?
+  lineNumber  Int?
+  scannedAt   DateTime @default(now())
+  error       String?
+  run         Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+}
+
+model RunEvent {
+  id        String   @id @default(cuid())
+  runId     String
+  type      String
+  stage     String?
+  message   String
+  percent   Int?
+  data      String?
+  createdAt DateTime @default(now())
+
+  run Run @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId, createdAt])
+}

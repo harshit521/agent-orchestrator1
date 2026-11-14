@@ -4,6 +4,9 @@ node_modules/
 # Build output
 dist/
 build/
+apps/api/data/
+apps/api/src/generated/prisma/
+.taskfleet/
 
 # Environment variables
 .env

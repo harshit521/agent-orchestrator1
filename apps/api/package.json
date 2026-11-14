@@ -10,7 +10,11 @@
     "start": "node dist/server.js",
     "typecheck": "tsc -p tsconfig.test.json",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "postinstall": "prisma generate",
+    "db:generate": "prisma generate",
+    "db:push": "node -e \"require('node:fs').mkdirSync('data',{recursive:true})\" && prisma db push",
+    "db:studio": "prisma studio"
   },
   "keywords": [
     "taskfleet",
@@ -20,11 +24,15 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@fastify/static": "^10.1.8",
+    "@prisma/adapter-better-sqlite3": "^7.10.1",
+    "@prisma/client": "^7.10.1",
     "fastify": "^5.12.1",
     "zod": "^4.5.4"
   },
   "devDependencies": {
     "@types/node": "^26.4.0",
+    "prisma": "^7.10.1",
     "tsx": "^4.23.13",
     "typescript": "^7.0.2",
     "vitest": "^5.0.5"
