@@ -1,0 +1,44 @@
+{
+  "name": "agent-orchestrator",
+  "version": "1.0.0",
+  "description": "TaskFleet",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=apps/api",
+    "dev:api": "npm run dev --workspace=apps/api",
+    "dev:web": "npm run dev --workspace=apps/web",
+    "build": "npm run build --workspaces --if-present",
+    "start": "npm run start --workspace=apps/api",
+    "preview": "npm run preview --workspace=apps/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "test:watch": "npm run test:watch --workspace=apps/api",
+    "db:generate": "npm run db:generate --workspace=apps/api",
+    "db:push": "npm run db:push --workspace=apps/api",
+    "db:studio": "npm run db:studio --workspace=apps/api"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/harshit521/agent-orchestrator.git"
+  },
+  "keywords": [
+    "ai",
+    "agents",
+    "orchestration",
+    "llm",
+    "taskfleet"
+  ],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/harshit521/agent-orchestrator/issues"
+  },
+  "homepage": "https://github.com/harshit521/agent-orchestrator#readme"
+}

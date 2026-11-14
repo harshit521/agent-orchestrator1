@@ -1,0 +1,21 @@
+services:
+  api:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3000
+      DATABASE_URL: file:./data/taskfleet.db
+      LLM_PROVIDER: ${LLM_PROVIDER:-stub}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
+      WORKTREES_ENABLED: "false"
+      SECURITY_ENABLED: ${SECURITY_ENABLED:-false}
+    volumes:
+      - taskfleet-data:/app/apps/api/data
+
+volumes:
+  taskfleet-data:
