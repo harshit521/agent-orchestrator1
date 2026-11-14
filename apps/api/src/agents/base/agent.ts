@@ -10,6 +10,8 @@ export interface Agent {
   readonly name: string;
   readonly description: string;
   readonly capabilities: readonly string[];
+  readonly providerId?: string;
+  readonly model?: string;
 
   run(
     input: AgentInput,

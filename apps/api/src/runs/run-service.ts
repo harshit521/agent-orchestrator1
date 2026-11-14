@@ -10,6 +10,7 @@ export interface StartTaskRequest {
   prompt: string;
   title?: string;
   agentId: string;
+  priority?: string;
 }
 
 export interface LoggerLike {
@@ -28,6 +29,13 @@ export class UnknownAgentError extends Error {
   constructor(agentId: string) {
     super(`Unknown agent: ${agentId}`);
     this.name = "UnknownAgentError";
+  }
+}
+
+export class TaskNotFoundError extends Error {
+  constructor(taskId: string) {
+    super(`Task not found: ${taskId}`);
+    this.name = "TaskNotFoundError";
   }
 }
 
@@ -56,25 +64,61 @@ export class RunService {
     this.#logger = deps.logger;
   }
 
+  /** Creates a task and immediately starts its first run in the background. */
   async startTask(request: StartTaskRequest) {
     const agent = this.#requireAgent(request.agentId);
-    const { task, run } = await this.#create(request, agent);
+    const { task, run } = await this.#store.createTaskWithRun({
+      title: request.title?.trim() || deriveTitle(request.prompt),
+      prompt: request.prompt,
+      agentId: agent.id,
+      priority: request.priority ?? "medium",
+    });
 
-    void this.#execute(task.id, run.id, agent, request.prompt).catch(
-      (error: unknown) => {
-        this.#logger.error(
-          { err: error, taskId: task.id, runId: run.id },
-          "Background run failed"
-        );
-      }
-    );
+    this.#launch(task.id, run.id, agent, request.prompt);
 
     return { task, run };
   }
 
+  /** Creates a queued task without executing it. */
+  async createQueuedTask(request: StartTaskRequest) {
+    const agent = this.#requireAgent(request.agentId);
+    const task = await this.#store.createTask({
+      title: request.title?.trim() || deriveTitle(request.prompt),
+      prompt: request.prompt,
+      agentId: agent.id,
+      priority: request.priority ?? "medium",
+    });
+
+    return { task };
+  }
+
+  /** Starts another run for an existing task. */
+  async startExistingTask(taskId: string) {
+    const task = await this.#store.getTask(taskId);
+
+    if (!task) {
+      throw new TaskNotFoundError(taskId);
+    }
+
+    const agent = this.#requireAgent(task.agentId);
+    const { task: updatedTask, run } = await this.#store.startRunForTask(
+      task.id,
+      agent.id
+    );
+
+    this.#launch(task.id, run.id, agent, task.prompt);
+
+    return { task: updatedTask, run };
+  }
+
   async runToCompletion(request: StartTaskRequest) {
     const agent = this.#requireAgent(request.agentId);
-    const { task, run } = await this.#create(request, agent);
+    const { task, run } = await this.#store.createTaskWithRun({
+      title: request.title?.trim() || deriveTitle(request.prompt),
+      prompt: request.prompt,
+      agentId: agent.id,
+      priority: request.priority ?? "medium",
+    });
     const result = await this.#execute(
       task.id,
       run.id,
@@ -85,6 +129,15 @@ export class RunService {
     return { task, run, result };
   }
 
+  #launch(taskId: string, runId: string, agent: Agent, prompt: string): void {
+    void this.#execute(taskId, runId, agent, prompt).catch((error: unknown) => {
+      this.#logger.error(
+        { err: error, taskId, runId },
+        "Background run failed"
+      );
+    });
+  }
+
   #requireAgent(agentId: string): Agent {
     const agent = this.#agents.get(agentId);
 
@@ -93,14 +146,6 @@ export class RunService {
     }
 
     return agent;
-  }
-
-  async #create(request: StartTaskRequest, agent: Agent) {
-    return this.#store.createTaskWithRun({
-      title: request.title?.trim() || deriveTitle(request.prompt),
-      prompt: request.prompt,
-      agentId: agent.id,
-    });
   }
 
   async #execute(
@@ -114,8 +159,17 @@ export class RunService {
     await this.#record(runId, taskId, {
       type: "run.started",
       stage: "started",
-      message: `Running ${agent.name}`,
+      message: `Run created for ${agent.name}`,
       percent: 0,
+    });
+
+    await this.#record(runId, taskId, {
+      type: "agent.started",
+      stage: "agent.started",
+      message: `${agent.name} (${agent.providerId ?? "unknown"} · ${
+        agent.model ?? "unknown model"
+      }) started`,
+      percent: 5,
     });
 
     const context: AgentContext = {
@@ -125,7 +179,7 @@ export class RunService {
       previousResults: {},
       reportProgress: (progress) => {
         void this.#record(runId, taskId, {
-          type: "run.progress",
+          type: "agent.progress",
           stage: progress.stage,
           message: progress.message,
           ...(progress.percent !== undefined
@@ -156,6 +210,26 @@ export class RunService {
         durationMs: Date.now() - startedAt.getTime(),
       };
     }
+
+    await this.#record(
+      runId,
+      taskId,
+      result.status === "completed"
+        ? {
+            type: "agent.completed",
+            stage: "agent.completed",
+            message: `${agent.name} completed in ${result.durationMs}ms`,
+            percent: 90,
+            ...(result.usage ? { data: result.usage } : {}),
+          }
+        : {
+            type: "agent.failed",
+            stage: "agent.failed",
+            message: result.error?.message ?? `${agent.name} failed`,
+            percent: 90,
+            ...(result.error ? { data: result.error } : {}),
+          }
+    );
 
     // Make sure progress events are durable before the terminal event.
     await this.#pending;

@@ -95,6 +95,25 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
         worktreesRoot,
       }),
     },
+    integrations: {
+      llm: {
+        provider: config.llm.provider,
+        model: config.llm.model ?? null,
+        configured:
+          config.llm.provider === "stub" || Boolean(config.llm.apiKey),
+      },
+      github: {
+        repository: config.github.repository ?? null,
+        tokenConfigured: Boolean(config.github.token),
+        webhookConfigured: Boolean(config.github.webhookSecret),
+      },
+      worktrees: {
+        enabled: config.worktrees.enabled,
+      },
+      security: {
+        enabled: config.security.enabled,
+      },
+    },
   };
 
   const securityDeps = {

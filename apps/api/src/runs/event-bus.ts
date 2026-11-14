@@ -2,7 +2,11 @@ import { EventEmitter } from "node:events";
 
 export type RunEventType =
   | "run.started"
+  | "agent.started"
   | "run.progress"
+  | "agent.progress"
+  | "agent.completed"
+  | "agent.failed"
   | "run.completed"
   | "run.failed";
 

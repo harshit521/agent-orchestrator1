@@ -1,17 +1,48 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { ZodError } from "zod";
 
+import type { Agent } from "../agents/base/agent.js";
 import type { AgentRegistry } from "../agents/registry.js";
 import type { RunEventBus } from "../runs/event-bus.js";
-import type { RunStore } from "../runs/run-store.js";
+import type {
+  AgentRunStats,
+  RunStore,
+  UpdateTaskInput,
+} from "../runs/run-store.js";
 import type { WorktreeService } from "../worktrees/worktree-service.js";
-import { eventToDto, runToDto } from "../runs/run-dto.js";
+import { eventToDto, parseJsonValue, runToDto } from "../runs/run-dto.js";
 import {
   RunService,
   type StartTaskRequest,
+  TaskNotFoundError,
   UnknownAgentError,
 } from "../runs/run-service.js";
-import { createTaskSchema, researchRequestSchema } from "./schemas.js";
+import {
+  activityQuerySchema,
+  createTaskSchema,
+  listRunsQuerySchema,
+  researchRequestSchema,
+  updateTaskSchema,
+} from "./schemas.js";
+
+export interface IntegrationStatus {
+  llm: {
+    provider: string;
+    model: string | null;
+    configured: boolean;
+  };
+  github: {
+    repository: string | null;
+    tokenConfigured: boolean;
+    webhookConfigured: boolean;
+  };
+  worktrees: {
+    enabled: boolean;
+  };
+  security: {
+    enabled: boolean;
+  };
+}
 
 export interface RouteDependencies {
   agents: AgentRegistry;
@@ -22,17 +53,42 @@ export interface RouteDependencies {
     enabled: boolean;
     service: WorktreeService;
   };
+  integrations: IntegrationStatus;
 }
 
 function validationError(reply: FastifyReply, error: ZodError) {
   return reply.status(400).send({
     success: false,
-    error: "Invalid request body.",
+    error: "Invalid request.",
     issues: error.issues.map((issue) => ({
       path: issue.path.join("."),
       message: issue.message,
     })),
   });
+}
+
+function emptyStats(agentId: string): AgentRunStats {
+  return {
+    agentId,
+    totalRuns: 0,
+    completedRuns: 0,
+    failedRuns: 0,
+    activeRuns: 0,
+    lastStartedAt: null,
+  };
+}
+
+function agentToDto(agent: Agent, stats: AgentRunStats) {
+  return {
+    id: agent.id,
+    name: agent.name,
+    description: agent.description,
+    capabilities: agent.capabilities,
+    provider: agent.providerId ?? null,
+    model: agent.model ?? null,
+    status: stats.activeRuns > 0 ? "running" : "idle",
+    stats,
+  };
 }
 
 export function registerRoutes(
@@ -44,15 +100,109 @@ export function registerRoutes(
     uptimeSeconds: Math.round(process.uptime()),
   }));
 
-  app.get("/agents", async () => ({
+  app.get("/integrations", async () => ({
     success: true,
-    agents: deps.agents.list().map((agent) => ({
-      id: agent.id,
-      name: agent.name,
-      description: agent.description,
-      capabilities: agent.capabilities,
-    })),
+    health: {
+      status: "ok",
+      uptimeSeconds: Math.round(process.uptime()),
+    },
+    ...deps.integrations,
   }));
+
+  app.get("/stats", async () => {
+    const [stats, recentActivity] = await Promise.all([
+      deps.store.getStats(),
+      deps.store.listRecentActivity(12),
+    ]);
+
+    return {
+      success: true,
+      tasks: stats.tasks,
+      runs: stats.runs,
+      agents: { total: deps.agents.list().length },
+      activeRuns: stats.activeRuns.map((run) => ({
+        ...runToDto(run),
+        task: run.task,
+      })),
+      recentActivity: recentActivity.map((event) => ({
+        id: event.id,
+        runId: event.runId,
+        taskId: event.run.task.id,
+        taskTitle: event.run.task.title,
+        runStatus: event.run.status,
+        type: event.type,
+        stage: event.stage,
+        message: event.message,
+        percent: event.percent,
+        data: parseJsonValue(event.data),
+        createdAt: event.createdAt.toISOString(),
+      })),
+    };
+  });
+
+  app.get("/activity", async (request, reply) => {
+    const parsed = activityQuerySchema.safeParse(request.query);
+
+    if (!parsed.success) {
+      return validationError(reply, parsed.error);
+    }
+
+    const events = await deps.store.listRecentActivity(parsed.data.limit);
+
+    return {
+      success: true,
+      activity: events.map((event) => ({
+        id: event.id,
+        runId: event.runId,
+        taskId: event.run.task.id,
+        taskTitle: event.run.task.title,
+        runStatus: event.run.status,
+        type: event.type,
+        stage: event.stage,
+        message: event.message,
+        percent: event.percent,
+        data: parseJsonValue(event.data),
+        createdAt: event.createdAt.toISOString(),
+      })),
+    };
+  });
+
+  app.get("/agents", async () => {
+    const stats = await deps.store.agentStats();
+    const byAgent = new Map(stats.map((entry) => [entry.agentId, entry]));
+
+    return {
+      success: true,
+      agents: deps.agents.list().map((agent) =>
+        agentToDto(agent, byAgent.get(agent.id) ?? emptyStats(agent.id))
+      ),
+    };
+  });
+
+  app.get<{ Params: { agentId: string } }>(
+    "/agents/:agentId",
+    async (request, reply) => {
+      const agent = deps.agents.get(request.params.agentId);
+
+      if (!agent) {
+        return reply
+          .status(404)
+          .send({ success: false, error: "Agent not found." });
+      }
+
+      const stats = await deps.store.agentStats(agent.id);
+      const recentRuns = await deps.store.listRuns({
+        agentId: agent.id,
+        limit: 10,
+      });
+
+      return {
+        success: true,
+        agent: agentToDto(agent, stats[0] ?? emptyStats(agent.id)),
+        recentRuns: recentRuns.map(runToDto),
+      };
+    }
+  );
 
   app.get("/worktrees", async () => {
     if (!deps.worktrees.enabled) {
@@ -79,9 +229,19 @@ export function registerRoutes(
     }
 
     try {
-      const { task, run } = await deps.runService.startTask(
-        toStartRequest(parsed.data)
-      );
+      const startRequest = toStartRequest(parsed.data);
+
+      if (!parsed.data.start) {
+        const { task } = await deps.runService.createQueuedTask(startRequest);
+
+        return reply.status(201).send({
+          success: true,
+          task: { ...task, runs: task.runs.map(runToDto) },
+          run: null,
+        });
+      }
+
+      const { task, run } = await deps.runService.startTask(startRequest);
 
       return reply.status(202).send({
         success: true,
@@ -135,6 +295,142 @@ export function registerRoutes(
       };
     }
   );
+
+  app.patch<{ Params: { taskId: string } }>(
+    "/tasks/:taskId",
+    async (request, reply) => {
+      const parsed = updateTaskSchema.safeParse(request.body);
+
+      if (!parsed.success) {
+        return validationError(reply, parsed.error);
+      }
+
+      const existing = await deps.store.getTask(request.params.taskId);
+
+      if (!existing) {
+        return reply
+          .status(404)
+          .send({ success: false, error: "Task not found." });
+      }
+
+      if (
+        parsed.data.agentId !== undefined &&
+        !deps.agents.get(parsed.data.agentId)
+      ) {
+        return reply.status(404).send({
+          success: false,
+          error: `Unknown agent: ${parsed.data.agentId}`,
+        });
+      }
+
+      const patch: UpdateTaskInput = {};
+
+      if (parsed.data.title !== undefined) {
+        patch.title = parsed.data.title;
+      }
+
+      if (parsed.data.prompt !== undefined) {
+        patch.prompt = parsed.data.prompt;
+      }
+
+      if (parsed.data.agentId !== undefined) {
+        patch.agentId = parsed.data.agentId;
+      }
+
+      if (parsed.data.priority !== undefined) {
+        patch.priority = parsed.data.priority;
+      }
+
+      if (parsed.data.status !== undefined) {
+        patch.status = parsed.data.status;
+      }
+
+      const task = await deps.store.updateTask(existing.id, patch);
+
+      return {
+        success: true,
+        task: {
+          ...task,
+          runs: task.runs.map(runToDto),
+        },
+      };
+    }
+  );
+
+  app.delete<{ Params: { taskId: string } }>(
+    "/tasks/:taskId",
+    async (request, reply) => {
+      const existing = await deps.store.getTask(request.params.taskId);
+
+      if (!existing) {
+        return reply
+          .status(404)
+          .send({ success: false, error: "Task not found." });
+      }
+
+      await deps.store.deleteTask(existing.id);
+
+      return { success: true };
+    }
+  );
+
+  app.post<{ Params: { taskId: string } }>(
+    "/tasks/:taskId/run",
+    async (request, reply) => {
+      try {
+        const { task, run } = await deps.runService.startExistingTask(
+          request.params.taskId
+        );
+
+        return reply.status(202).send({
+          success: true,
+          task: { ...task, runs: task.runs.map(runToDto) },
+          run: runToDto(run),
+        });
+      } catch (error: unknown) {
+        if (error instanceof TaskNotFoundError) {
+          return reply
+            .status(404)
+            .send({ success: false, error: "Task not found." });
+        }
+
+        if (error instanceof UnknownAgentError) {
+          return reply.status(404).send({
+            success: false,
+            error: error.message,
+          });
+        }
+
+        throw error;
+      }
+    }
+  );
+
+  app.get("/runs", async (request, reply) => {
+    const parsed = listRunsQuerySchema.safeParse(request.query);
+
+    if (!parsed.success) {
+      return validationError(reply, parsed.error);
+    }
+
+    const runs = await deps.store.listRuns({
+      limit: parsed.data.limit,
+      ...(parsed.data.status !== undefined
+        ? { status: parsed.data.status }
+        : {}),
+      ...(parsed.data.agentId !== undefined
+        ? { agentId: parsed.data.agentId }
+        : {}),
+      ...(parsed.data.taskId !== undefined
+        ? { taskId: parsed.data.taskId }
+        : {}),
+    });
+
+    return {
+      success: true,
+      runs: runs.map(runToDto),
+    };
+  });
 
   app.get<{ Params: { runId: string } }>(
     "/runs/:runId",
@@ -317,10 +613,12 @@ function toStartRequest(data: {
   prompt: string;
   title?: string | undefined;
   agentId: string;
+  priority: string;
 }): StartTaskRequest {
   return {
     prompt: data.prompt,
     agentId: data.agentId,
+    priority: data.priority,
     ...(data.title ? { title: data.title } : {}),
   };
 }

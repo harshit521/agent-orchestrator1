@@ -176,13 +176,15 @@ describe("TaskFleet API", () => {
     expect(run.durationMs).toBeGreaterThanOrEqual(0);
     expect(run.events.map((event: { type: string }) => event.type)).toEqual([
       "run.started",
-      "run.progress",
-      "run.progress",
+      "agent.started",
+      "agent.progress",
+      "agent.progress",
+      "agent.completed",
       "run.completed",
     ]);
 
     const progress = run.events.filter(
-      (event: { type: string }) => event.type === "run.progress"
+      (event: { type: string }) => event.type === "agent.progress"
     );
     expect(progress.map((event: { percent: number }) => event.percent)).toEqual([
       20, 80,

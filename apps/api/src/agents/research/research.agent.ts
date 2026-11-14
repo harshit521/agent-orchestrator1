@@ -28,11 +28,15 @@ export class ResearchAgent implements Agent {
   readonly description =
     "Analyzes a prompt and produces a preliminary research summary.";
   readonly capabilities = ["research", "summarization", "analysis"];
+  readonly providerId: string;
+  readonly model: string;
 
   readonly #provider: LLMProvider;
 
   constructor(provider: LLMProvider) {
     this.#provider = provider;
+    this.providerId = provider.id;
+    this.model = provider.defaultModel;
   }
 
   async run(

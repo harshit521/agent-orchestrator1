@@ -70,7 +70,9 @@ describe("run event stream", () => {
       }
 
       expect(text).toContain("event: run.started");
-      expect(text).toContain("event: run.progress");
+      expect(text).toContain("event: agent.started");
+      expect(text).toContain("event: agent.progress");
+      expect(text).toContain("event: agent.completed");
       expect(text).toContain("event: run.completed");
       expect(text).toContain('"percent":20');
       expect(text).toContain('"percent":80');

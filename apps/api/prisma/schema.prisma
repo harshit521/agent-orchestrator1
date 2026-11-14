@@ -17,28 +17,32 @@ model Task {
   prompt    String
   agentId   String
   status    String
+  priority  String   @default("medium")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   runs Run[]
 
   @@index([status])
+  @@index([priority])
   @@index([createdAt])
 }
 
 model Run {
-  id          String    @id @default(cuid())
-  taskId      String
-  agentId     String
-  status      String
-  provider    String?
-  model       String?
-  output      String?
-  errorCode   String?
+  id           String    @id @default(cuid())
+  taskId       String
+  agentId      String
+  status       String
+  provider     String?
+  model        String?
+  output       String?
+  errorCode    String?
   errorMessage String?
-  startedAt   DateTime  @default(now())
-  completedAt DateTime?
-  durationMs  Int?
+  inputTokens  Int?
+  outputTokens Int?
+  startedAt    DateTime  @default(now())
+  completedAt  DateTime?
+  durationMs   Int?
 
   task   Task       @relation(fields: [taskId], references: [id], onDelete: Cascade)
   events RunEvent[]
