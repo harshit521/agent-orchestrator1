@@ -211,9 +211,9 @@ UI styling
 
 Real-time
 
-Socket.IO / WebSockets
+Server-Sent Events (SSE)
 
-Live status and log updates
+Live run progress streamed to the Kanban
 
 Backend
 
@@ -223,9 +223,9 @@ REST API and orchestration
 
 Database
 
-PostgreSQL
+SQLite (PostgreSQL-ready schema)
 
-Tasks, workers, users, status history
+Tasks, runs, events and status history
 
 ORM
 
@@ -243,7 +243,7 @@ Worker Isolation
 
 Docker
 
-Sandboxed task execution
+Sandboxed task execution (planned per-task workers)
 
 Git Isolation
 
@@ -257,11 +257,11 @@ TypeScript adapter layer
 
 Common agent contract
 
-Primary Agent
+Agent Providers
 
-Anthropic Claude API
+OpenAI / Anthropic / offline stub
 
-Default coding-agent backend
+Pluggable LLM backends behind one adapter interface
 
 VCS / CI
 
@@ -301,9 +301,9 @@ Team authentication
 
 Deployment
 
-Docker Compose / Cloud VM
+Docker + Docker Compose
 
-Development and demo deployment
+Single-image demo (API + built dashboard)
 
 Testing
 
@@ -423,57 +423,95 @@ Apply secret scanning, dependency scanning, and SAST checks to AI-generated code
 
 🛠️ Getting Started
 
-Requirements: Node.js 20+ and npm 10+.
+Requirements: Node.js 20+ (22 recommended), npm 10+, Git. Docker is optional.
 
 ```bash
-npm install
-npm run dev        # API with hot reload on http://127.0.0.1:3000
-npm run typecheck  # strict TypeScript check (src + tests)
-npm test           # Vitest unit + HTTP integration tests
-npm run build      # compile the API to apps/api/dist
-npm start          # run the compiled build
+npm install       # installs all workspaces and generates the Prisma client
+npm run db:push   # creates apps/api/data/taskfleet.db from the Prisma schema
+npm run dev       # API with hot reload on http://127.0.0.1:3000
+npm run dev:web   # dashboard on http://127.0.0.1:5173 (run in a second terminal)
 ```
 
-Environment variables:
-
-- `PORT` — HTTP port (default `3000`)
-- `HOST` — bind address (default `127.0.0.1`; set `0.0.0.0` inside Docker)
-
-Example request:
+Single-process demo (the API serves the built dashboard):
 
 ```bash
-curl -X POST http://127.0.0.1:3000/research \
+npm run build
+npm start         # http://127.0.0.1:3000
+```
+
+Verification:
+
+```bash
+npm run typecheck
+npm test
+```
+
+Docker:
+
+```bash
+docker compose up --build   # http://localhost:3000
+```
+
+Configuration — copy `.env.example` to `apps/api/.env` (loaded automatically):
+
+- `PORT` / `HOST` — HTTP port and bind address (default `3000` / `127.0.0.1`; use `0.0.0.0` in Docker)
+- `DATABASE_URL` — SQLite location (default `file:./data/taskfleet.db`)
+- `LLM_PROVIDER` — `stub` (default), `openai`, or `anthropic`
+- `LLM_API_KEY` / `LLM_MODEL` / `LLM_BASE_URL` — provider credentials and optional overrides
+- `GITHUB_WEBHOOK_SECRET` — enables `/webhooks/github` when set
+- `WORKTREES_ENABLED` / `WORKTREES_ROOT` — Git worktree isolation
+- `SECURITY_ENABLED` — enables `POST /security/scan`
+
+API endpoints (all also available under the `/api` prefix for the dashboard):
+
+- `GET /health` — liveness probe
+- `GET /agents` — registered agents and capabilities
+- `POST /tasks` `{ prompt, title?, agentId? }` — create a task, returns `202` with the task and run
+- `GET /tasks` — task list with runs (Kanban data)
+- `GET /tasks/:taskId` — task with runs and persisted events
+- `GET /runs/:runId` — run with persisted events
+- `GET /runs/:runId/events` — SSE stream (`run.started`, `run.progress`, `run.completed`, `run.failed`)
+- `POST /research` `{ input, agentId? }` — synchronous compatibility endpoint
+- `GET /worktrees` — worktrees when `WORKTREES_ENABLED=true`
+- `GET /security/tools` / `POST /security/scan` — SecOps gate
+- `POST /webhooks/github` — HMAC-verified GitHub webhook receiver
+
+Example:
+
+```bash
+curl -X POST http://127.0.0.1:3000/api/tasks \
   -H 'content-type: application/json' \
-  -d '{"input":"Explain git worktrees","agentId":"research-agent"}'
+  -d '{"prompt":"Explain git worktrees","agentId":"research-agent"}'
+
+curl -N http://127.0.0.1:3000/api/runs/<runId>/events
 ```
-
-`agentId` is optional and defaults to `research-agent`. Responses:
-
-- `200` — `{ success: true, taskId, runId, agentId, result }`
-- `400` — invalid or missing `input`
-- `404` — unknown `agentId`
-- `500` — the agent reported a failure, or an unexpected error occurred
 
 ✅ Current Implementation Status
 
-The repository currently contains the **backend foundation only**. Everything else in this README describes the target design.
+Implemented and covered by tests:
 
-Implemented:
+- npm workspaces monorepo: `apps/api` + `apps/web`
+- Fastify 5 API in strict TypeScript (native ESM) with Zod-validated inputs and outputs
+- Vendor-neutral `Agent` contract, `AgentRegistry`, and a `ResearchAgent`
+- Real LLM adapters for **OpenAI-compatible** and **Anthropic** APIs, plus a deterministic offline `stub` provider (default)
+- Prisma 7 + SQLite persistence for `Task`, `Run`, and `RunEvent`
+- Background task execution with ordered, persisted progress events
+- SSE streaming per run with replay of persisted events and heartbeats
+- React + Vite + Tailwind Kanban dashboard with live progress and a run detail panel
+- Single-process production mode: the API serves the built dashboard
+- Git worktree service (per-task branch + worktree) with real Git integration tests
+- GitHub webhook verification/status mapping and a Pull Request client
+- SecOps scanner runner for Gitleaks, Semgrep, and Trivy (graceful when a tool is absent)
+- GitHub Actions CI, Dockerfile, Docker Compose, `.env.example`
 
-- npm workspaces monorepo (`apps/api`)
-- Fastify 5 HTTP server in strict TypeScript (native ESM)
-- `POST /research` endpoint with Zod-validated input
-- `GET /health` health check
-- Vendor-neutral `Agent` plugin contract (`AgentInput`, `AgentContext`, `AgentResult`)
-- `AgentRegistry` so agents can be added without touching the HTTP layer
-- `ResearchAgent` reference implementation (stub output — no LLM call yet)
-- Structured Pino logging and graceful `SIGINT`/`SIGTERM` shutdown
-- Vitest suite covering the agent contract, the registry, and the HTTP routes
-- Root `build`, `typecheck`, `test` scripts and a GitHub Actions CI workflow
+Partially implemented / needs external prerequisites:
 
-Not implemented yet: React frontend, Kanban board, WebSockets, PostgreSQL/Prisma persistence, Docker worker isolation, Git worktrees, LLM-backed agents, GitHub OAuth/PR/CI integration, SecOps scanning.
+- Worktree isolation exists as a tested service; it is not yet wired into task execution because the current agent does not modify files.
+- GitHub PR creation needs `GITHUB_TOKEN` + `GITHUB_REPOSITORY`; webhooks need a public URL and `GITHUB_WEBHOOK_SECRET`.
+- Security scanning needs the external binaries installed; it runs but has not been executed against Gitleaks/Semgrep/Trivy in this environment.
+- The Docker image was authored but not built here (no Docker daemon available).
 
-> The stack table above lists the **target** stack. Prisma, Docker, GitHub, Socket.IO, OAuth, and the security scanners are planned, not present yet.
+Not implemented yet: per-task Docker worker isolation, GitHub OAuth, coding agents that edit repositories and push branches, task decomposition/scheduling, and analytics.
 
 🗺️ Development Roadmap
 
@@ -643,13 +681,19 @@ These are potential extensions rather than features confirmed as part of the cur
 
 📌 Project Status
 
-Status: In Development — backend foundation
+Status: In Development — end-to-end demo working
 Project Type: Semester Group Project
 Duration: 16 weeks
 Focus: Multi-Agent AI + DevOps + GitHub Automation + Security
 
-Implemented today: monorepo, Fastify API, typed agent plugin contract + registry, Zod validation, tests, CI.
-Remaining: everything from the Kanban UI and persistence through Docker isolation, LLM-backed agents, GitHub integration, and SecOps scanning.
+Implemented: npm workspaces monorepo, Fastify API, typed agent contract + registry, Zod contracts,
+OpenAI/Anthropic/stub LLM adapters, Prisma persistence and SSE progress stream, React Kanban
+dashboard, Git worktree isolation, GitHub webhook/PR integration, SecOps scanner runner, Docker
+packaging, CI, and tests.
+
+Remaining: per-task Docker worker execution, GitHub OAuth, a coding agent that edits and pushes
+repositories, task decomposition/scheduling, and analytics. Docker image build and live
+GitHub/LLM/security-tool runs require credentials or a Docker daemon not available here.
 
 📄 Project Reference
 

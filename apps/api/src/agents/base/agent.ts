@@ -1,10 +1,9 @@
 import type { AgentContext } from "./agent-context.js";
+import type { AgentInput } from "./agent-input.js";
 import type { AgentResult } from "./agent-result.js";
 
-export interface AgentInput {
-  prompt: string;
-  data?: unknown;
-}
+export type { AgentInput, AgentProgress, ProgressReporter } from "./agent-input.js";
+export type { AgentError, AgentResult, AgentStatus, AgentUsage } from "./agent-result.js";
 
 export interface Agent {
   readonly id: string;

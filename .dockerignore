@@ -1,0 +1,14 @@
+node_modules
+**/node_modules
+.git
+.github
+**/dist
+apps/api/data
+.taskfleet
+*.db
+*.db-journal
+coverage
+.env
+.env.*
+.DS_Store
+README.md

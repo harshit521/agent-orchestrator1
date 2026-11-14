@@ -1,5 +1,5 @@
-
 import type { AgentResult } from "./agent-result.js";
+import type { ProgressReporter } from "./agent-input.js";
 
 export interface AgentContext {
   taskId: string;
@@ -12,4 +12,7 @@ export interface AgentContext {
 
   // Optional metadata for this execution.
   metadata?: Record<string, unknown>;
+
+  // Reports fine-grained execution progress to the orchestrator.
+  reportProgress?: ProgressReporter;
 }
